@@ -1,0 +1,53 @@
+# Эталон для <MAILCOW_DIR>/data/conf/nginx/site.mailshare.custom (устанавливает check-mailcow.sh)
+
+# Проверка сессии почты (только для внутренних подзапросов)
+location = /mailshare-auth {
+    internal;
+    fastcgi_pass php-fpm-mailcow:9002;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME /web/mailshare-auth.php;
+    fastcgi_pass_request_body off;
+    fastcgi_param CONTENT_LENGTH "";
+}
+
+location = /mailshare {
+    return 301 /mailshare/;
+}
+
+# Страница загрузки: без входа в почту отправляем на страницу входа
+location = /mailshare/ {
+    auth_request /mailshare-auth;
+    error_page 401 = @mailshare_login;
+
+    resolver 127.0.0.11 valid=30s;
+    set $mailshare_gateway http://mailshare-gateway:8000;
+    proxy_pass $mailshare_gateway;
+    proxy_set_header Host $host;
+}
+
+location @mailshare_login {
+    return 302 /;
+}
+
+# API загрузки: только для вошедших в почту
+location ^~ /mailshare/api/ {
+    auth_request /mailshare-auth;
+    auth_request_set $mailshare_user $upstream_http_x_mailshare_user;
+
+    resolver 127.0.0.11 valid=30s;
+    set $mailshare_gateway http://mailshare-gateway:8000;
+    proxy_pass $mailshare_gateway;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Mailshare-User $mailshare_user;   # затирает подделку от клиента
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+    client_max_body_size 12m;        # одна часть файла (10 МБ) с запасом
+    proxy_request_buffering off;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+}
+
+# Наш PHP-файл напрямую из браузера не открывается
+location = /mailshare-auth.php { return 404; }

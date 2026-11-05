@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Отправка больших файлов</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #6b7385;
+    --line: #dfe2e8; --accent: #2f6fde; --accent-text: #ffffff;
+    --ok: #1f8a4c; --err: #c23b3b; --bar: #e7eaf0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not(.embed) {
+      --bg: #15181e; --card: #1e222a; --text: #e6e8ec; --muted: #9aa1ae;
+      --line: #2e333d; --accent: #5b8ff0; --accent-text: #0d1117;
+      --ok: #4cc27f; --err: #ef7070; --bar: #2a2f39;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  .drop {
+    display: block; border: 2px dashed var(--line); border-radius: 10px; padding: 32px 16px;
+    text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .drop strong { display: block; font-size: 16px; margin-bottom: 4px; }
+  .drop span { color: var(--muted); }
+  input[type=file] { display: none; }
+  button {
+    font: inherit; border-radius: 7px; border: 1px solid var(--line); background: transparent;
+    color: var(--text); padding: 6px 12px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); padding: 8px 16px; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.x { border: none; padding: 0 4px; color: var(--muted); font-size: 18px; line-height: 1; }
+  button.link { border: none; padding: 4px 0; color: var(--accent); }
+  .files { list-style: none; margin: 16px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+  .files:empty { display: none; }
+  .files li { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
+  .files li:first-child { border-top: none; }
+  .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .size, .fstate { color: var(--muted); white-space: nowrap; font-size: 14px; }
+  .fstate.ok { color: var(--ok); }
+  .actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
+  .actions .left { display: flex; gap: 16px; flex-wrap: wrap; }
+  .total { color: var(--muted); }
+  .total.err { color: var(--err); }
+  .bar { height: 8px; background: var(--bar); border-radius: 4px; margin: 16px 0 6px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .status { color: var(--muted); font-size: 14px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .result { display: none; margin-top: 20px; }
+  .link-row { display: flex; gap: 8px; margin: 8px 0 16px; }
+  .link-row input {
+    flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  .preview { background: #ffffff; color: #202124; border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-top: 8px; }
+  .note { color: var(--muted); font-size: 14px; margin-top: 16px; }
+  .alert { display: none; margin-bottom: 16px; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--err); color: var(--err); }
+  .msg { margin-top: 12px; font-size: 14px; }
+  .msg.err { color: var(--err); }
+  .hidden { display: none !important; }
+  /* Режим окна внутри письма SOGo */
+  .embed body { background: #ffffff; }
+  .embed main { padding: 16px; max-width: none; }
+  .embed h1, .embed .sub, .embed .standalone-only { display: none; }
+  .embed .card { border: none; padding: 0; }
+  .embed .drop { padding: 22px 12px; }
+  :root:not(.embed) .embed-only { display: none; }
+</style>
+<script>
+  // Внутри письма страница открывается во фрейме с ?embed=1
+  if (new URLSearchParams(location.search).has('embed') && window.parent !== window) {
+    document.documentElement.classList.add('embed');
+  }
+</script>
+</head>
+<body>
+<main>
+  <h1>Отправка больших файлов</h1>
+  <p class="sub" id="who">Проверяем вход…</p>
+
+  <div class="alert" id="alert"></div>
+
+  <div class="card">
+    <label class="drop" id="drop">
+      <strong>Перетащите файлы сюда или нажмите, чтобы выбрать</strong>
+      <span id="limits">&nbsp;</span>
+      <input type="file" id="picker" multiple>
+    </label>
+
+    <ul class="files" id="files"></ul>
+
+    <div class="actions" id="actions">
+      <span class="total" id="total"></span>
+      <button class="primary" id="start" disabled>Загрузить и получить ссылку</button>
+    </div>
+
+    <div id="progress" class="hidden">
+      <div class="bar"><div id="barFill"></div></div>
+      <div class="actions" style="margin-top:0">
+        <span class="status" id="status"></span>
+        <button id="cancel">Отменить</button>
+      </div>
+    </div>
+
+    <div class="result" id="result">
+      <!-- Внутри письма -->
+      <div class="embed-only">
+        <div class="actions">
+          <span class="left">
+            <button class="link" id="eCopy">Скопировать текст</button>
+            <button class="link" id="ePdf">Скачать PDF</button>
+          </span>
+          <button class="primary" id="insert">Вставить в письмо</button>
+        </div>
+        <div class="msg" id="insertMsg"></div>
+      </div>
+      <!-- Отдельная страница -->
+      <div class="standalone-only">
+        <strong>Ссылка на файлы</strong>
+        <div class="link-row">
+          <input id="url" readonly>
+          <button id="copyUrl">Копировать</button>
+        </div>
+        <div class="actions" style="margin-top:0">
+          <strong>Карточка для письма</strong>
+          <span class="left">
+            <button id="sPdf">Скачать PDF для вложения</button>
+            <button class="primary" id="copyCard">Скопировать карточку</button>
+          </span>
+        </div>
+        <div class="preview" id="preview"></div>
+        <p class="note">Вставьте карточку в конец письма (Ctrl+V) и, если нужна скрепка у получателя, прикрепите скачанный PDF.</p>
+        <div class="actions"><span></span><button id="again">Отправить другие файлы</button></div>
+      </div>
+    </div>
+
+    <p class="note standalone-only">Все выбранные файлы отправляются по одной ссылке. Получателю не нужна регистрация,
+      ссылка перестанет работать по истечении срока. Не закрывайте страницу, пока идёт загрузка.</p>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const EMBED = document.documentElement.classList.contains('embed');
+  const state = { cfg: null, files: [], phase: 'select', uploadId: null, cancelled: false, result: null };
+
+  function fmtSize(b) {
+    const n = (v, d) => v.toFixed(d).replace(/\.0$/, '').replace('.', ',');
+    if (b >= 1e9) return n(b / 1e9, b >= 1e10 ? 0 : 1) + ' ГБ';
+    if (b >= 1e6) return n(b / 1e6, b >= 1e8 ? 0 : 1) + ' МБ';
+    if (b >= 1e3) return Math.round(b / 1e3) + ' КБ';
+    return b + ' Б';
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const totalSize = () => state.files.reduce((s, f) => s + f.size, 0);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function plural(n) {
+    const a = n % 10, b = n % 100;
+    if (a === 1 && b !== 11) return 'файл';
+    if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return 'файла';
+    return 'файлов';
+  }
+
+  function showAlert(text) { const a = $('alert'); a.textContent = text; a.style.display = text ? 'block' : 'none'; }
+
+  // ---------- Связь с окном письма (только внутри SOGo) ----------
+
+  function toParent(msg) { if (EMBED) window.parent.postMessage(msg, location.origin); }
+  function setPhase(p) { state.phase = p; toParent({ type: 'mailshare:state', busy: p === 'uploading' }); }
+
+  const pending = {};
+  window.addEventListener('message', (ev) => {
+    if (!EMBED || ev.source !== window.parent || ev.origin !== location.origin) return;
+    const d = ev.data || {};
+    if (d.type === 'mailshare:inserted' && pending[d.id]) { pending[d.id](d); delete pending[d.id]; }
+    if (d.type === 'mailshare:cancel' && state.phase === 'uploading') cancel();
+  });
+  function askParent(msg, timeoutMs) {
+    const id = Math.random().toString(36).slice(2);
+    return new Promise((resolve) => {
+      pending[id] = resolve;
+      toParent(Object.assign({ id }, msg));
+      setTimeout(() => { if (pending[id]) { delete pending[id]; resolve({ timeout: true }); } }, timeoutMs);
+    });
+  }
+
+  // ---------- Запросы к Gateway ----------
+
+  class HttpError extends Error {
+    constructor(status, data) { super((data && data.error) || ('Ошибка ' + status)); this.status = status; this.data = data || {}; }
+  }
+
+  async function api(method, path, body, isRaw) {
+    const opts = { method, credentials: 'same-origin', cache: 'no-store', headers: {} };
+    if (body !== undefined) {
+      if (isRaw) { opts.body = body; opts.headers['Content-Type'] = 'application/octet-stream'; }
+      else { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
+    }
+    const r = await fetch('api/' + path, opts);
+    let data = null;
+    try { data = await r.json(); } catch (e) { /* не JSON */ }
+    if (!r.ok) throw new HttpError(r.status, data);
+    return data;
+  }
+
+  async function init() {
+    try {
+      state.cfg = await api('GET', 'me');
+      $('who').textContent = 'Вы вошли как ' + state.cfg.user;
+      $('limits').textContent = 'До ' + fmtSize(state.cfg.max_share_bytes) + ' за одну отправку · ссылка действует '
+        + state.cfg.expiration_days + ' дней';
+    } catch (e) {
+      $('who').textContent = '';
+      showAlert(e.status === 401
+        ? 'Нет входа в почту. Откройте почту, войдите и вернитесь на эту страницу.'
+        : 'Сервис временно недоступен. Попробуйте позже.');
+    }
+    render();
+  }
+
+  // ---------- Выбор файлов ----------
+
+  function addFiles(list) {
+    if (state.phase !== 'select') return;
+    showAlert('');
+    for (const file of list) {
+      if (file.size === 0) { showAlert('Файл «' + file.name + '» пустой — он не добавлен.'); continue; }
+      const dup = state.files.some((f) => f.file.name === file.name && f.size === file.size && f.file.lastModified === file.lastModified);
+      if (!dup) state.files.push({ file, size: file.size, li: null });
+    }
+    render();
+  }
+
+  function render() {
+    const ul = $('files');
+    ul.innerHTML = '';
+    for (const f of state.files) {
+      const li = document.createElement('li');
+      li.innerHTML = '<span class="name"></span><span class="size"></span><span class="fstate"></span>';
+      li.querySelector('.name').textContent = f.file.name;
+      li.querySelector('.size').textContent = fmtSize(f.size);
+      if (state.phase === 'select') {
+        const x = document.createElement('button');
+        x.className = 'x'; x.title = 'Убрать'; x.textContent = '×';
+        x.onclick = () => { state.files.splice(state.files.indexOf(f), 1); render(); };
+        li.appendChild(x);
+      }
+      f.li = li;
+      ul.appendChild(li);
+    }
+    const total = totalSize();
+    const cfg = state.cfg;
+    const tooBig = cfg && total > cfg.max_share_bytes;
+    const tooMany = cfg && state.files.length > cfg.max_files;
+    const t = $('total');
+    if (!state.files.length) { t.textContent = 'Файлы не выбраны'; t.className = 'total'; }
+    else if (tooBig) { t.textContent = 'Вместе ' + fmtSize(total) + ' — больше допустимых ' + fmtSize(cfg.max_share_bytes); t.className = 'total err'; }
+    else if (tooMany) { t.textContent = 'Слишком много файлов: не больше ' + cfg.max_files; t.className = 'total err'; }
+    else { t.textContent = state.files.length + ' ' + plural(state.files.length) + ' · ' + fmtSize(total); t.className = 'total'; }
+    $('start').disabled = !cfg || !state.files.length || tooBig || tooMany;
+    $('drop').classList.toggle('hidden', state.phase !== 'select' || !cfg);
+    $('actions').classList.toggle('hidden', state.phase !== 'select' || !cfg);
+  }
+
+  function setFileState(f, text, ok) {
+    const s = f.li && f.li.querySelector('.fstate');
+    if (s) { s.textContent = text; s.className = 'fstate' + (ok ? ' ok' : ''); }
+  }
+  function setStatus(text, cls) { const s = $('status'); s.textContent = text; s.className = 'status' + (cls ? ' ' + cls : ''); }
+
+  // ---------- Загрузка ----------
+
+  async function start() {
+    setPhase('uploading');
+    state.cancelled = false;
+    render();
+    $('progress').classList.remove('hidden');
+    $('cancel').classList.remove('hidden');
+    $('barFill').style.width = '0';
+    try {
+      await upload();
+    } catch (e) {
+      if (state.cancelled) return;
+      setStatus(e.status === 401
+        ? 'Сессия почты истекла. Войдите в почту заново и отправьте файлы ещё раз.'
+        : (e.message || 'Ошибка загрузки'), 'err');
+      $('cancel').classList.add('hidden');
+      setPhase('select');
+      render();
+      for (const f of state.files) setFileState(f, '');
+    }
+  }
+
+  async function upload() {
+    setStatus('Подготовка…');
+    const init = await api('POST', 'uploads', { files: state.files.map((f) => ({ name: f.file.name, size: f.size })) });
+    state.uploadId = init.upload_id;
+    const cs = init.chunk_size;
+    const total = totalSize();
+    let doneBytes = 0;
+    const started = Date.now();
+
+    for (let fi = 0; fi < state.files.length; fi++) {
+      const f = state.files[fi];
+      const meta = init.files[fi];
+      let idx = meta.next_chunk;
+      setFileState(f, 'загружается…');
+      while (idx < meta.total_chunks) {
+        if (state.cancelled) return;
+        const blob = f.file.slice(idx * cs, Math.min(f.size, (idx + 1) * cs));
+        let attempt = 0;
+        for (;;) {
+          try {
+            const r = await api('POST', 'uploads/' + state.uploadId + '/files/' + fi + '/chunks/' + idx, blob, true);
+            idx = r.next_chunk;
+            break;
+          } catch (e) {
+            if (state.cancelled) return;
+            if (e.status === 409 && typeof e.data.next_chunk === 'number') { idx = e.data.next_chunk; break; }
+            const retryable = !e.status || e.status >= 500 || e.status === 429;
+            if (!retryable || attempt >= 6) throw e;
+            attempt++;
+            setStatus('Связь прервалась, повторяем… (' + attempt + ')');
+            await sleep(Math.min(30000, 1000 * 2 ** attempt));
+          }
+        }
+        const sentInFile = Math.min(f.size, idx * cs);
+        const sent = doneBytes + sentInFile;
+        $('barFill').style.width = (sent / total * 100).toFixed(1) + '%';
+        setFileState(f, Math.floor(sentInFile / f.size * 100) + '%');
+        const secs = (Date.now() - started) / 1000;
+        setStatus('Загружено ' + fmtSize(sent) + ' из ' + fmtSize(total) + (secs > 1 ? ' · ' + fmtSize(sent / secs) + '/с' : ''));
+      }
+      doneBytes += f.size;
+      setFileState(f, 'готово', true);
+    }
+
+    if (state.cancelled) return;
+    setStatus('Завершаем…');
+    let res, attempt = 0;
+    for (;;) {
+      try { res = await api('POST', 'uploads/' + state.uploadId + '/complete'); break; }
+      catch (e) {
+        if (!(!e.status || e.status >= 500) || attempt >= 4) throw e;
+        attempt++; await sleep(2000 * attempt);
+      }
+    }
+    $('barFill').style.width = '100%';
+    setStatus('Готово · ссылка действует до ' + res.expires_date, 'ok');
+    $('cancel').classList.add('hidden');
+    setPhase('done');
+    showResult(res);
+  }
+
+  // ---------- Карточка для письма ----------
+
+  function fileIcon(name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    const groups = [
+      ['📊', ['xls', 'xlsx', 'xlsm', 'csv', 'ods']],
+      ['📑', ['ppt', 'pptx', 'odp', 'key']],
+      ['🗜️', ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz']],
+      ['🎬', ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'm4v']],
+      ['🖼️', ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp', 'tif', 'tiff', 'svg']],
+      ['🎵', ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac']],
+      ['📦', ['exe', 'msi', 'dmg', 'pkg', 'iso', 'apk']],
+    ];
+    for (const [icon, exts] of groups) if (exts.includes(ext)) return icon;
+    return '📄';
+  }
+
+  const MAX_LISTED = 10;
+
+  // Карточка для письма: только обычные абзацы и переносы строк — без таблиц и списков,
+  // чтобы её было легко редактировать как обычный текст.
+  function cardHtml(res) {
+    const n = res.files.length;
+    const u = esc(res.url);
+    const lines = res.files.slice(0, MAX_LISTED).map((f) => fileIcon(f.name) + ' ' + esc(f.name) + ' — ' + fmtSize(f.size));
+    if (n > MAX_LISTED) lines.push('и ещё ' + (n - MAX_LISTED) + ' ' + plural(n - MAX_LISTED));
+    return '<p>&nbsp;</p>'
+      + '<p>📎 <strong>Файлы для скачивания: ' + n + ' ' + plural(n) + ' · ' + fmtSize(res.size) + '</strong><br>'
+      + lines.join('<br>') + '</p>'
+      + '<p><a href="' + u + '"><strong>⬇ Скачать файлы</strong></a><br>'
+      + 'Ссылка действует до ' + esc(res.expires_date) + '. Регистрация не нужна.<br>'
+      + '<a href="' + u + '">' + u + '</a></p>';
+  }
+
+  function cardText(res) {
+    const lines = [];
+    if (res.files.length === 1) {
+      lines.push('Файл: ' + res.files[0].name + ' (' + fmtSize(res.files[0].size) + ')');
+    } else {
+      lines.push('Файлы (' + res.files.length + ', всего ' + fmtSize(res.size) + '):');
+      for (const f of res.files) lines.push('  • ' + f.name + ' (' + fmtSize(f.size) + ')');
+    }
+    lines.push('');
+    lines.push('Скачать: ' + res.url);
+    lines.push('Ссылка действует до ' + res.expires_date + '. Регистрация не нужна.');
+    return lines.join('\n');
+  }
+
+  function showResult(res) {
+    state.result = res;
+    $('url').value = res.url;
+    $('preview').innerHTML = cardHtml(res);
+    $('insertMsg').textContent = ''; $('insertMsg').className = 'msg';
+    $('insert').disabled = false; $('insert').textContent = 'Вставить в письмо';
+    $('result').style.display = 'block';
+  }
+
+  async function getPdfFile() {
+    const r = await fetch('api/uploads/' + state.uploadId + '/pdf', { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) throw new Error('PDF не получен (' + r.status + ')');
+    return new File([await r.blob()], state.result.pdf_name, { type: 'application/pdf' });
+  }
+
+  async function downloadPdf() {
+    try {
+      const file = await getPdfFile();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(file); a.download = file.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    } catch (e) { showAlert(e.message); }
+  }
+
+  async function insertIntoMail() {
+    const btn = $('insert'), msg = $('insertMsg');
+    btn.disabled = true; btn.textContent = 'Вставляем…';
+    msg.textContent = ''; msg.className = 'msg';
+    let file = null;
+    try { file = await getPdfFile(); } catch (e) { /* вставим хотя бы карточку */ }
+    const res = await askParent({ type: 'mailshare:insert', html: cardHtml(state.result), text: cardText(state.result), file }, 8000);
+    if (res.timeout) {
+      msg.textContent = 'Окно письма не ответило. Нажмите «Скопировать текст» и вставьте его в письмо вручную.';
+      msg.className = 'msg err';
+    } else if (res.inserted && res.attached) {
+      msg.textContent = 'Готово: карточка вставлена, PDF прикреплён.';
+      return;   // окно письма само закроет это окно
+    } else {
+      const parts = [];
+      parts.push(res.inserted ? 'Карточка вставлена в письмо.' : 'Карточку вставить не удалось — нажмите «Скопировать текст» и вставьте вручную (Ctrl+V).');
+      parts.push(file && res.attached ? 'PDF прикреплён.' : 'PDF прикрепить не удалось — нажмите «Скачать PDF» и прикрепите его скрепкой.');
+      msg.textContent = parts.join(' ');
+      msg.className = 'msg err';
+    }
+    btn.disabled = false; btn.textContent = 'Вставить ещё раз';
+  }
+
+  async function cancel() {
+    state.cancelled = true;
+    setStatus('Отменено', 'err');
+    $('cancel').classList.add('hidden');
+    if (state.uploadId) { try { await api('DELETE', 'uploads/' + state.uploadId); } catch (e) { /* очистится само */ } }
+    setPhase('select');
+    state.uploadId = null;
+    render();
+  }
+
+  function reset() {
+    state.files = []; setPhase('select'); state.uploadId = null; state.result = null;
+    $('result').style.display = 'none';
+    $('progress').classList.add('hidden');
+    render();
+  }
+
+  async function copyRich(html, text, btn) {
+    let ok = false;
+    try {
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+        })]);
+        ok = true;
+      }
+    } catch (e) { /* ниже — запасной способ */ }
+    if (!ok) await copy(text, btn, true);
+    flash(btn);
+  }
+
+  async function copy(text, btn, silent) {
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) {
+      const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t);
+      t.select(); document.execCommand('copy'); t.remove();
+    }
+    if (!silent) flash(btn);
+  }
+  function flash(btn) { const old = btn.textContent; btn.textContent = 'Скопировано'; setTimeout(() => (btn.textContent = old), 1500); }
+
+  $('start').onclick = start;
+  $('cancel').onclick = cancel;
+  $('again').onclick = reset;
+  $('insert').onclick = insertIntoMail;
+  $('eCopy').onclick = (ev) => copyRich(cardHtml(state.result), cardText(state.result), ev.target);
+  $('ePdf').onclick = downloadPdf;
+  $('sPdf').onclick = downloadPdf;
+  $('copyUrl').onclick = (ev) => copy($('url').value, ev.target);
+  $('copyCard').onclick = (ev) => copyRich(cardHtml(state.result), cardText(state.result), ev.target);
+  $('picker').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', (e) => addFiles(e.dataTransfer.files));
+  window.addEventListener('beforeunload', (e) => { if (!EMBED && state.phase === 'uploading') { e.preventDefault(); e.returnValue = ''; } });
+
+  init();
+})();
+</script>
+</body>
+</html>
