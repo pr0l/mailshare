@@ -1,0 +1,13 @@
+# Секреты
+.env
+
+# Данные: загруженные файлы, база Pingvin, журнал Gateway
+pingvin/
+gateway-data/
+
+# Резервные копии и служебное
+backup/
+*.zip
+__pycache__/
+*.pyc
+.DS_Store

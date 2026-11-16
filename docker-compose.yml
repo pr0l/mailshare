@@ -1,0 +1,91 @@
+services:
+  pingvin:
+    image: smp46/pingvin-share-x:v2.1.0
+    container_name: mailshare-pingvin
+    restart: unless-stopped
+    environment:
+      - TRUST_PROXY=true
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./pingvin/data:/opt/app/backend/data
+      - ./pingvin/images:/opt/app/frontend/public/img
+    configs:
+      - source: pingvin_config
+        target: /opt/app/config.yaml     # настройки Pingvin из .env (см. configs ниже)
+    ports:
+      # Только для входа в админку через SSH-туннель. Из интернета не виден.
+      - "127.0.0.1:3000:3000"
+    networks:
+      - mailshare
+
+  gateway:
+    build: ./gateway
+    image: mailshare-gateway:3.2
+    container_name: mailshare-gateway
+    restart: unless-stopped
+    environment:
+      # Все значения — из .env; Gateway получает только то, что ему нужно
+      - PINGVIN_URL=http://mailshare-pingvin:3000
+      - PINGVIN_USER=${PINGVIN_USER:-}
+      - PINGVIN_PASSWORD=${PINGVIN_PASSWORD:-}
+      - PUBLIC_URL=https://${PUBLIC_HOST:?задайте PUBLIC_HOST в .env}
+      - MAIL_ORIGIN=https://${MAIL_HOST:?задайте MAIL_HOST в .env}
+      # Лимиты; здесь — значения по умолчанию, если в .env их нет
+      - MAX_SHARE_BYTES=${MAX_SHARE_BYTES:-300000000}
+      - DAILY_QUOTA_GB=${DAILY_QUOTA_GB:-10}
+      - MAX_ACTIVE_UPLOADS=${MAX_ACTIVE_UPLOADS:-3}
+      - SHARE_EXPIRATION_DAYS=${SHARE_EXPIRATION_DAYS:-180}
+      - MAX_FILES_PER_SHARE=${MAX_FILES_PER_SHARE:-100}
+      - PDF_NAME=${PDF_NAME:-download-files.pdf}
+      - DISPLAY_TZ_OFFSET=${DISPLAY_TZ_OFFSET:-3}
+    volumes:
+      - ./gateway-data:/data       # журнал отправок (SQLite)
+    depends_on:
+      - pingvin
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - mailshare
+    # Портов наружу нет: Gateway доступен только почтовому Nginx через сеть mailshare.
+
+networks:
+  mailshare:
+    name: mailshare
+
+# Настройки Pingvin Share X. Параметры, которых здесь нет, берутся из веб-интерфейса;
+# перечисленные здесь в интерфейсе менять нельзя. Значения — из .env.
+# После изменения: docker compose up -d pingvin
+configs:
+  pingvin_config:
+    content: |
+      general:
+        appName: "${PINGVIN_APP_NAME:-Email file storage}"
+        appUrl: "https://${PUBLIC_HOST:?задайте PUBLIC_HOST в .env}"
+        defaultLanguage: "ru-RU"
+        showHomePage: "false"
+        showAuthButtons: "true"
+      security:
+        allowRegistration: "false"
+        allowUnauthenticatedShares: "false"
+        allowAdminAccessAllShares: "true"
+      share:
+        maxSize: "${MAX_SHARE_BYTES:-300000000}"
+        maxExpiration: "${SHARE_EXPIRATION_DAYS:-180} days"
+        defaultExpiration: "${SHARE_EXPIRATION_DAYS:-180} days"
+        fileRetentionPeriod: "${FILE_RETENTION_DAYS:-30} days"
+        enableShareEmailRecipients: "false"
+        autoOpenShareModal: "true"
+        reverseShareSimpleOnly: "true"
+        shareIdLength: "10"
+      smtp:
+        enabled: "false"
+      initUser:
+        enabled: ${PINGVIN_INIT_ADMIN:-false}
+        username: "admin"
+        email: "${PINGVIN_ADMIN_EMAIL:-admin@example.com}"
+        password: "${PINGVIN_ADMIN_PASSWORD:-}"
+        isAdmin: true

@@ -1,0 +1,10 @@
+# Образец для <MAILCOW_DIR>/docker-compose.override.yml — если файл уже есть, объедините вручную
+# Если в файле Mailcow уже есть другие настройки — объедините, а не заменяйте.
+services:
+  nginx-mailcow:
+    networks:
+      mailshare:
+
+networks:
+  mailshare:
+    external: true
